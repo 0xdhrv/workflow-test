@@ -10,4 +10,4 @@ This project contains a GitHub workflow to test automatic PR labeling based on a
 4.  **Observe the PR labels**: After two approvals, the PR should automatically be labeled with `approved`.
 
 663552b2-a042-4da4-8a8f-1fc7caf8c283
-
+183aab55-2d23-47d8-bae2-cfcb013a23e0
