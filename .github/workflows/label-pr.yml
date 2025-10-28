@@ -1,5 +1,9 @@
 name: Label PR After Approval
 
+permissions:
+  issues: write
+  pull-requests: read
+
 on:
   pull_request_review:
     types: [submitted]
@@ -11,6 +15,7 @@ jobs:
       - name: Check approvals and label
         uses: actions/github-script@v6
         with:
+          github-token: ${{ secrets.PERSONAL_TOKEN || github.token }}
           script: |
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
@@ -18,16 +23,40 @@ jobs:
               pull_number: context.issue.number,
             });
 
-            // Count total approvals (any reviewer)
-            const approvals = reviews.filter(r => r.state === 'APPROVED').length;
+            // Use each reviewer's latest review to decide approval state.
+            // This prevents double-counting multiple reviews by the same user.
+            const latestByUser = {};
+            for (const r of reviews) {
+              if (!r.user || !r.user.login) continue;
+              const login = r.user.login;
+              // Use submitted_at to determine recency; fallback to created_at if needed
+              const when = r.submitted_at || r.created_at || null;
+              const existing = latestByUser[login];
+              if (!existing) {
+                latestByUser[login] = r;
+              } else {
+                const existingWhen = existing.submitted_at || existing.created_at || null;
+                if (when && existingWhen) {
+                  if (new Date(when) > new Date(existingWhen)) latestByUser[login] = r;
+                } else if (when && !existingWhen) {
+                  latestByUser[login] = r;
+                }
+              }
+            }
 
-            // Check if the repository owner specifically approved
-            const ownerApproved = reviews.some(r => r.state === 'APPROVED' && r.user && r.user.login === context.repo.owner);
+            const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
+
+            // Check if the repository owner specifically approved (based on their latest review)
+            const ownerLatest = latestByUser[context.repo.owner];
+            const ownerApproved = ownerLatest && ownerLatest.state === 'APPROVED';
 
             // Collect labels to add (avoid multiple API calls)
             const labelsToAdd = [];
-            if (approvals >= 2) labelsToAdd.push('external:approved');
+            if (uniqueApprovals >= 2) labelsToAdd.push('external:approved');
             if (ownerApproved) labelsToAdd.push('owner:approved');
+
+            // Log computed values so runs show why labels were/weren't added
+            console.log(`uniqueApprovals=${uniqueApprovals} ownerApproved=${ownerApproved} labelsToAdd=${JSON.stringify(labelsToAdd)}`);
 
             if (labelsToAdd.length > 0) {
               await github.rest.issues.addLabels({
