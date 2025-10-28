@@ -1,0 +1,28 @@
+name: Label PR After Approval
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  label-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check approvals and label
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            const approvals = reviews.filter(r => r.state === 'APPROVED').length;
+            if (approvals >= 2) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['approved']
+              });
+            }
