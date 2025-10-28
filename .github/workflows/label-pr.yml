@@ -25,8 +25,17 @@ jobs:
 
             // Use each reviewer's latest review to decide approval state.
             // This prevents double-counting multiple reviews by the same user.
+            // Debug: log PR and actor info to help diagnose fork vs. non-fork runs
+            console.log('actor=', context.actor);
+            console.log('repo=', `${context.repo.owner}/${context.repo.repo}`);
+            console.log('pr_head_repo=', context.payload.pull_request && context.payload.pull_request.head && context.payload.pull_request.head.repo ? context.payload.pull_request.head.repo.full_name : 'unknown');
+
+            // Debug: log the raw reviews array (size only here; full dump below)
+            console.log(`reviews.length=${reviews.length}`);
             const latestByUser = {};
             for (const r of reviews) {
+              // Debug: show each review's key fields
+              console.log(`review: user=${r.user && r.user.login} state=${r.state} submitted_at=${r.submitted_at || r.created_at}`);
               if (!r.user || !r.user.login) continue;
               const login = r.user.login;
               // Use submitted_at to determine recency; fallback to created_at if needed
@@ -42,6 +51,13 @@ jobs:
                   latestByUser[login] = r;
                 }
               }
+            }
+
+            // Debug: dump latestByUser mapping for inspection
+            try {
+              console.log('latestByUser=' + JSON.stringify(Object.fromEntries(Object.entries(latestByUser).map(([k,v]) => [k, {state: v.state, submitted_at: v.submitted_at || v.created_at}])), null, 2));
+            } catch (e) {
+              console.log('failed to stringify latestByUser', e && e.message);
             }
 
             const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
