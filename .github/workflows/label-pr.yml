@@ -68,7 +68,7 @@ jobs:
 
             // Collect labels to add (avoid multiple API calls)
             const labelsToAdd = [];
-            if (uniqueApprovals >= 2) labelsToAdd.push('external:approved');
+            if (uniqueApprovals >= 1) labelsToAdd.push('external:approved');
             if (ownerApproved) labelsToAdd.push('owner:approved');
 
             // Log computed values so runs show why labels were/weren't added
