@@ -17,12 +17,23 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
+
+            // Count total approvals (any reviewer)
             const approvals = reviews.filter(r => r.state === 'APPROVED').length;
-            if (approvals >= 2) {
+
+            // Check if the repository owner specifically approved
+            const ownerApproved = reviews.some(r => r.state === 'APPROVED' && r.user && r.user.login === context.repo.owner);
+
+            // Collect labels to add (avoid multiple API calls)
+            const labelsToAdd = [];
+            if (approvals >= 2) labelsToAdd.push('external:approved');
+            if (ownerApproved) labelsToAdd.push('owner:approved');
+
+            if (labelsToAdd.length > 0) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                labels: ['approved']
+                labels: labelsToAdd
               });
             }
