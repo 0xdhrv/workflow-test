@@ -9,3 +9,5 @@ This project contains a GitHub workflow to test automatic PR labeling based on a
 3.  **Have at least two users review and approve** the pull request. These can be a mix of internal collaborators and external contributors (if your repository settings allow external contributions and reviews).
 4.  **Observe the PR labels**: After two approvals, the PR should automatically be labeled with `approved`.
 
+663552b2-a042-4da4-8a8f-1fc7caf8c283
+
