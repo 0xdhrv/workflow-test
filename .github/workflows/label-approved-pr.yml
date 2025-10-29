@@ -34,7 +34,17 @@ jobs:
             }
             
             const prNumber = pullRequests[0].number;
-            console.log(`\n=== Checking PR #${prNumber} ===`);
+            console.log(`\n=== Processing PR #${prNumber} ===`);
+            
+            // Fetch PR details to get the author
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            
+            const prAuthor = pr.user.login;
+            console.log(`PR Author: ${prAuthor}`);
             
             // Fetch all reviews for this PR
             const { data: reviews } = await github.rest.pulls.listReviews({
@@ -59,21 +69,57 @@ jobs:
               }
             }
 
-            // Count approvals
-            const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
-            const ownerLatest = latestByUser[context.repo.owner];
-            const ownerApproved = ownerLatest?.state === 'APPROVED';
+            // Separate approvals into owner and external
+            let ownerApproved = false;
+            let externalApproved = false;
+            
+            for (const [reviewer, review] of Object.entries(latestByUser)) {
+              if (review.state === 'APPROVED') {
+                if (reviewer === prAuthor) {
+                  ownerApproved = true;
+                  console.log(`✓ Owner (${reviewer}) approved`);
+                } else {
+                  externalApproved = true;
+                  console.log(`✓ External reviewer (${reviewer}) approved`);
+                }
+              }
+            }
 
-            console.log(`\nUnique approvals: ${uniqueApprovals}`);
-            console.log(`Owner (${context.repo.owner}) approved: ${ownerApproved}`);
+            console.log(`\nOwner approved: ${ownerApproved}`);
+            console.log(`External approved: ${externalApproved}`);
 
-            // Determine labels to add
+            // Get current labels
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            
+            const currentLabelNames = currentLabels.map(l => l.name);
+            console.log(`Current labels: ${currentLabelNames.join(', ') || 'none'}`);
+
+            // Determine labels to add/remove
             const labelsToAdd = [];
-            if (uniqueApprovals >= 1) labelsToAdd.push('external:approved');
-            if (ownerApproved) labelsToAdd.push('owner:approved');
+            const labelsToRemove = [];
+            
+            // Handle external:approved label
+            if (externalApproved && !currentLabelNames.includes('external:approved')) {
+              labelsToAdd.push('external:approved');
+            } else if (!externalApproved && currentLabelNames.includes('external:approved')) {
+              labelsToRemove.push('external:approved');
+            }
+            
+            // Handle owner:approved label
+            if (ownerApproved && !currentLabelNames.includes('owner:approved')) {
+              labelsToAdd.push('owner:approved');
+            } else if (!ownerApproved && currentLabelNames.includes('owner:approved')) {
+              labelsToRemove.push('owner:approved');
+            }
 
             console.log(`Labels to add: ${labelsToAdd.join(', ') || 'none'}`);
+            console.log(`Labels to remove: ${labelsToRemove.join(', ') || 'none'}`);
 
+            // Add labels
             if (labelsToAdd.length > 0) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
@@ -81,7 +127,24 @@ jobs:
                 issue_number: prNumber,
                 labels: labelsToAdd
               });
-              console.log(`✅ Successfully added labels to PR #${prNumber}!`);
-            } else {
-              console.log('ℹ️ No labels needed');
+              console.log(`✅ Added labels: ${labelsToAdd.join(', ')}`);
+            }
+            
+            // Remove labels
+            for (const label of labelsToRemove) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: label
+                });
+                console.log(`✅ Removed label: ${label}`);
+              } catch (error) {
+                console.log(`⚠️ Could not remove label ${label}: ${error.message}`);
+              }
+            }
+            
+            if (labelsToAdd.length === 0 && labelsToRemove.length === 0) {
+              console.log('ℹ️ No label changes needed');
             }

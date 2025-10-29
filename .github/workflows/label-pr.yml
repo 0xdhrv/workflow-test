@@ -18,5 +18,4 @@ jobs:
           echo "Review submitted on PR #${{ github.event.pull_request.number }}"
           echo "Review state: ${{ github.event.review.state }}"
           echo "Reviewer: ${{ github.event.review.user.login }}"
-
-
+          echo "PR Author: ${{ github.event.pull_request.user.login }}"
