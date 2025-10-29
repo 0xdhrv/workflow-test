@@ -1,23 +1,88 @@
-name: Check PR Review (Step 1)
+name: Label PR After Approval
 
-# This workflow runs on pull_request_review but only saves data
-# It has limited permissions for fork PRs, so it can't label
-# The second workflow (label-pr-action.yml) will do the actual labeling
-
+# Use pull_request_target for fork PRs - it runs in base repo context
+# This has write permissions even for forks
 permissions:
-  contents: read
+  pull-requests: write
+  issues: write
 
 on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
   pull_request_review:
     types: [submitted, edited, dismissed]
 
 jobs:
-  check-review:
+  label-pr:
     runs-on: ubuntu-latest
     steps:
-      - name: Save PR number
-        run: |
-          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
-          echo "REVIEW_STATE=${{ github.event.review.state }}" >> $GITHUB_ENV
-          echo "Workflow triggered for PR #${{ github.event.pull_request.number }}"
-          echo "Review state: ${{ github.event.review.state }}"
+      - name: Check approvals and label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get PR number - handle both event types
+            const prNumber = context.payload.pull_request?.number || context.payload.number;
+            
+            if (!prNumber) {
+              console.log('❌ Could not determine PR number');
+              console.log('Event:', context.eventName);
+              console.log('Payload keys:', Object.keys(context.payload));
+              return;
+            }
+            
+            console.log(`\n=== Checking PR #${prNumber} ===`);
+            console.log(`Event: ${context.eventName}`);
+            console.log(`Actor: ${context.actor}`);
+            
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            console.log(`Total reviews: ${reviews.length}`);
+            
+            // Get latest review from each user
+            const latestByUser = {};
+            for (const r of reviews) {
+              if (!r.user?.login) continue;
+              const login = r.user.login;
+              const when = r.submitted_at || r.created_at;
+              
+              console.log(`  Review by ${login}: ${r.state} at ${when}`);
+              
+              if (!latestByUser[login] || new Date(when) > new Date(latestByUser[login].submitted_at || latestByUser[login].created_at)) {
+                latestByUser[login] = r;
+              }
+            }
+
+            const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
+            const ownerLatest = latestByUser[context.repo.owner];
+            const ownerApproved = ownerLatest?.state === 'APPROVED';
+
+            console.log(`\nUnique approvals: ${uniqueApprovals}`);
+            console.log(`Owner (${context.repo.owner}) approved: ${ownerApproved}`);
+
+            const labelsToAdd = [];
+            if (uniqueApprovals >= 1) labelsToAdd.push('external:approved');
+            if (ownerApproved) labelsToAdd.push('owner:approved');
+
+            console.log(`Labels to add: ${labelsToAdd.join(', ') || 'none'}`);
+
+            if (labelsToAdd.length > 0) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  labels: labelsToAdd
+                });
+                console.log(`✅ Successfully added labels!`);
+              } catch (error) {
+                console.error('❌ Error adding labels:', error.message);
+                console.error('Status:', error.status);
+                console.error('This might be a permissions issue');
+                throw error;
+              }
+            }
+
