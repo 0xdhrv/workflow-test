@@ -154,13 +154,15 @@ jobs:
 
             // Add labels
             if (labelsToAdd.length > 0) {
-              await github.rest.issues.addLabels({
+              const addResult = await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
                 labels: labelsToAdd
               });
               console.log(`✅ Added labels: ${labelsToAdd.join(', ')}`);
+              console.log(`API Response Status: ${addResult.status}`);
+              console.log(`API Response Data:`, JSON.stringify(addResult.data, null, 2));
             }
             
             // Remove labels
@@ -180,4 +182,25 @@ jobs:
             
             if (labelsToAdd.length === 0 && labelsToRemove.length === 0) {
               console.log('ℹ️ No label changes needed');
+            }
+            
+            // Verify labels were actually added by fetching them again
+            if (labelsToAdd.length > 0 || labelsToRemove.length > 0) {
+              console.log('\n=== Verification: Fetching current labels ===');
+              const { data: verifyLabels } = await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+              });
+              const verifyLabelNames = verifyLabels.map(l => l.name);
+              console.log(`Final labels on PR: ${verifyLabelNames.join(', ')}`);
+              
+              // Check if expected labels are present
+              for (const label of labelsToAdd) {
+                if (verifyLabelNames.includes(label)) {
+                  console.log(`✅ Confirmed: ${label} is present`);
+                } else {
+                  console.log(`❌ WARNING: ${label} was not found after adding!`);
+                }
+              }
             }
