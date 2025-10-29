@@ -1,0 +1,87 @@
+name: Label Approved PR
+
+# This workflow uses workflow_run to trigger AFTER the review workflow
+# It runs in the base repo context with FULL PERMISSIONS even for fork PRs
+permissions:
+  pull-requests: write
+  issues: write
+  actions: read
+
+on:
+  workflow_run:
+    workflows: ["PR Review Trigger"]
+    types: [completed]
+
+jobs:
+  label-pr:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Get PR number and add labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('=== Workflow Run Event ===');
+            console.log('Triggered by:', github.event.workflow_run.name);
+            console.log('Conclusion:', github.event.workflow_run.conclusion);
+            
+            // Get PR number from the workflow_run event
+            const pullRequests = github.event.workflow_run.pull_requests;
+            
+            if (!pullRequests || pullRequests.length === 0) {
+              console.log('❌ No pull requests found in workflow_run event');
+              return;
+            }
+            
+            const prNumber = pullRequests[0].number;
+            console.log(`\n=== Checking PR #${prNumber} ===`);
+            
+            // Fetch all reviews for this PR
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            console.log(`Total reviews: ${reviews.length}`);
+            
+            // Get latest review from each user
+            const latestByUser = {};
+            for (const r of reviews) {
+              if (!r.user?.login) continue;
+              const login = r.user.login;
+              const when = r.submitted_at || r.created_at;
+              
+              console.log(`  Review by ${login}: ${r.state} at ${when}`);
+              
+              if (!latestByUser[login] || new Date(when) > new Date(latestByUser[login].submitted_at || latestByUser[login].created_at)) {
+                latestByUser[login] = r;
+              }
+            }
+
+            // Count approvals
+            const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
+            const ownerLatest = latestByUser[context.repo.owner];
+            const ownerApproved = ownerLatest?.state === 'APPROVED';
+
+            console.log(`\nUnique approvals: ${uniqueApprovals}`);
+            console.log(`Owner (${context.repo.owner}) approved: ${ownerApproved}`);
+
+            // Determine labels to add
+            const labelsToAdd = [];
+            if (uniqueApprovals >= 1) labelsToAdd.push('external:approved');
+            if (ownerApproved) labelsToAdd.push('owner:approved');
+
+            console.log(`Labels to add: ${labelsToAdd.join(', ') || 'none'}`);
+
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: labelsToAdd
+              });
+              console.log(`✅ Successfully added labels to PR #${prNumber}!`);
+            } else {
+              console.log('ℹ️ No labels needed');
+            }
