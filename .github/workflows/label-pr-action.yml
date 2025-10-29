@@ -1,0 +1,111 @@
+name: Label PR After Approval (Step 2 - Fork Safe)
+
+# This workflow runs AFTER the check-review workflow completes
+# It uses workflow_run which runs in the base repo context with full permissions
+# This allows it to label PRs from forks
+
+permissions:
+  issues: write
+  pull-requests: write
+  actions: read
+
+on:
+  workflow_run:
+    workflows: ["Check PR Review (Step 1)"]
+    types: [completed]
+
+jobs:
+  label-pr:
+    runs-on: ubuntu-latest
+    # Only run if the first workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Get PR number from triggering workflow
+        uses: actions/github-script@v6
+        id: get-pr
+        with:
+          github-token: ${{ secrets.PERSONAL_TOKEN || github.token }}
+          script: |
+            // Get the PR number from the workflow_run event
+            const prNumber = github.event.workflow_run.pull_requests[0]?.number;
+            
+            if (!prNumber) {
+              console.log('No PR number found in workflow_run event');
+              return;
+            }
+            
+            console.log(`PR Number: ${prNumber}`);
+            core.setOutput('pr_number', prNumber);
+            return prNumber;
+
+      - name: Check approvals and label
+        if: steps.get-pr.outputs.pr_number
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.PERSONAL_TOKEN || github.token }}
+          script: |
+            const prNumber = ${{ steps.get-pr.outputs.pr_number }};
+            
+            console.log(`\n--- Checking PR #${prNumber} for approvals ---`);
+            
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            // Use each reviewer's latest review to decide approval state.
+            // This prevents double-counting multiple reviews by the same user.
+            console.log(`reviews.length=${reviews.length}`);
+            
+            const latestByUser = {};
+            for (const r of reviews) {
+              console.log(`review: user=${r.user && r.user.login} state=${r.state} submitted_at=${r.submitted_at || r.created_at}`);
+              if (!r.user || !r.user.login) continue;
+              const login = r.user.login;
+              const when = r.submitted_at || r.created_at || null;
+              const existing = latestByUser[login];
+              if (!existing) {
+                latestByUser[login] = r;
+              } else {
+                const existingWhen = existing.submitted_at || existing.created_at || null;
+                if (when && existingWhen) {
+                  if (new Date(when) > new Date(existingWhen)) latestByUser[login] = r;
+                } else if (when && !existingWhen) {
+                  latestByUser[login] = r;
+                }
+              }
+            }
+
+            // Debug: dump latestByUser mapping for inspection
+            try {
+              console.log('latestByUser=' + JSON.stringify(Object.fromEntries(Object.entries(latestByUser).map(([k,v]) => [k, {state: v.state, submitted_at: v.submitted_at || v.created_at}])), null, 2));
+            } catch (e) {
+              console.log('failed to stringify latestByUser', e && e.message);
+            }
+
+            const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
+
+            // Check if the repository owner specifically approved (based on their latest review)
+            const ownerLatest = latestByUser[context.repo.owner];
+            const ownerApproved = ownerLatest && ownerLatest.state === 'APPROVED';
+
+            // Collect labels to add (avoid multiple API calls)
+            const labelsToAdd = [];
+            if (uniqueApprovals >= 1) labelsToAdd.push('external:approved');
+            if (ownerApproved) labelsToAdd.push('owner:approved');
+
+            // Log computed values so runs show why labels were/weren't added
+            console.log(`uniqueApprovals=${uniqueApprovals} ownerApproved=${ownerApproved} labelsToAdd=${JSON.stringify(labelsToAdd)}`);
+
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: labelsToAdd
+              });
+              console.log(`✓ Successfully added labels: ${labelsToAdd.join(', ')}`);
+            } else {
+              console.log('No labels to add');
+            }

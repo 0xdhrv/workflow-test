@@ -1,86 +1,23 @@
-name: Label PR After Approval
+name: Check PR Review (Step 1)
+
+# This workflow runs on pull_request_review but only saves data
+# It has limited permissions for fork PRs, so it can't label
+# The second workflow (label-pr-action.yml) will do the actual labeling
 
 permissions:
-  issues: write
-  pull-requests: read
+  contents: read
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, edited, dismissed]
 
 jobs:
-  label-pr:
+  check-review:
     runs-on: ubuntu-latest
     steps:
-      - name: Check approvals and label
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.PERSONAL_TOKEN || github.token }}
-          script: |
-            const { data: reviews } = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-
-            // Use each reviewer's latest review to decide approval state.
-            // This prevents double-counting multiple reviews by the same user.
-            // Debug: log PR and actor info to help diagnose fork vs. non-fork runs
-            console.log('actor=', context.actor);
-            console.log('repo=', `${context.repo.owner}/${context.repo.repo}`);
-            console.log('pr_head_repo=', context.payload.pull_request && context.payload.pull_request.head && context.payload.pull_request.head.repo ? context.payload.pull_request.head.repo.full_name : 'unknown');
-
-            // Debug: log the raw reviews array (size only here; full dump below)
-            console.log(`reviews.length=${reviews.length}`);
-            const latestByUser = {};
-            for (const r of reviews) {
-              // Debug: show each review's key fields
-              console.log(`review: user=${r.user && r.user.login} state=${r.state} submitted_at=${r.submitted_at || r.created_at}`);
-              if (!r.user || !r.user.login) continue;
-              const login = r.user.login;
-              // Use submitted_at to determine recency; fallback to created_at if needed
-              const when = r.submitted_at || r.created_at || null;
-              const existing = latestByUser[login];
-              if (!existing) {
-                latestByUser[login] = r;
-              } else {
-                const existingWhen = existing.submitted_at || existing.created_at || null;
-                if (when && existingWhen) {
-                  if (new Date(when) > new Date(existingWhen)) latestByUser[login] = r;
-                } else if (when && !existingWhen) {
-                  latestByUser[login] = r;
-                }
-              }
-            }
-
-            // Debug: dump latestByUser mapping for inspection
-            try {
-              console.log('latestByUser=' + JSON.stringify(Object.fromEntries(Object.entries(latestByUser).map(([k,v]) => [k, {state: v.state, submitted_at: v.submitted_at || v.created_at}])), null, 2));
-            } catch (e) {
-              console.log('failed to stringify latestByUser', e && e.message);
-            }
-
-            const uniqueApprovals = Object.values(latestByUser).filter(r => r.state === 'APPROVED').length;
-
-            // Check if the repository owner specifically approved (based on their latest review)
-            const ownerLatest = latestByUser[context.repo.owner];
-            const ownerApproved = ownerLatest && ownerLatest.state === 'APPROVED';
-
-            // Collect labels to add (avoid multiple API calls)
-            const labelsToAdd = [];
-            if (uniqueApprovals >= 1) labelsToAdd.push('external:approved');
-            if (ownerApproved) labelsToAdd.push('owner:approved');
-
-            // Log computed values so runs show why labels were/weren't added
-            console.log(`uniqueApprovals=${uniqueApprovals} ownerApproved=${ownerApproved} labelsToAdd=${JSON.stringify(labelsToAdd)}`);
-
-            if (labelsToAdd.length > 0) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                labels: labelsToAdd
-              });
-            }
+      - name: Save PR number
+        run: |
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          echo "REVIEW_STATE=${{ github.event.review.state }}" >> $GITHUB_ENV
+          echo "Workflow triggered for PR #${{ github.event.pull_request.number }}"
+          echo "Review state: ${{ github.event.review.state }}"
