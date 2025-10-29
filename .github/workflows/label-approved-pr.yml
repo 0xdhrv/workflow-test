@@ -34,6 +34,11 @@ jobs:
             
             console.log('Triggered by:', workflowRun.name);
             console.log('Conclusion:', workflowRun.conclusion);
+            console.log('Head SHA:', workflowRun.head_sha);
+            console.log('Head branch:', workflowRun.head_branch);
+            
+            // Debug: Log the full pull_requests array
+            console.log('Pull requests array:', JSON.stringify(workflowRun.pull_requests, null, 2));
             
             // Get PR number - works for both fork and same-repo PRs
             let prNumber;
